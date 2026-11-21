@@ -1,0 +1,92 @@
+name: Build Grand Rescue Protocol
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release -j
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build/Release/GrandRescueProtocol.exe dist/
+          if (Test-Path assets) { Copy-Item assets dist/assets -Recurse }
+          Compress-Archive -Path dist/* -DestinationPath GrandRescueProtocol-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GrandRescueProtocol-windows
+          path: |
+            GrandRescueProtocol-windows.zip
+            build/Release/GrandRescueProtocol.exe
+
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libwayland-dev libxkbcommon-dev imagemagick wget file
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j
+      - name: Create AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp build/GrandRescueProtocol AppDir/usr/bin/
+          if [ -d assets ]; then cp -r assets AppDir/usr/bin/assets; fi
+          cat > AppDir/GrandRescueProtocol.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Grand Rescue Protocol
+          Exec=GrandRescueProtocol
+          Icon=grandrescueprotocol
+          Categories=Game;
+          EOF
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          cd "$HERE/usr/bin"
+          exec "$HERE/usr/bin/GrandRescueProtocol" "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          convert -size 256x256 xc:'#ff8c00' -fill black -draw "polygon 128,30 155,100 230,100 170,145 192,220 128,175 64,220 86,145 26,100 101,100" AppDir/grandrescueprotocol.png
+      - name: Build AppImage
+        run: |
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir GrandRescueProtocol-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GrandRescueProtocol-linux-appimage
+          path: GrandRescueProtocol-x86_64.AppImage
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux-appimage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/GrandRescueProtocol-windows.zip
+            out/GrandRescueProtocol-x86_64.AppImage
